@@ -39,6 +39,9 @@ jobs:
             --define=tflite_enable_xnnpack=false \
             --define=no_tensorflow_py_deps=true \
             --strip=always \
+            --@xnnpack//:xnnpack_enable_avx512fp16=false \
+            --@xnnpack//:xnnpack_enable_avx512vbmi=false \
+            --@xnnpack//:xnnpack_enable_avx512vnni=false \
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
