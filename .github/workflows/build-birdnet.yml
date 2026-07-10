@@ -34,7 +34,28 @@ jobs:
           npm install
           npm run build
 
-      - name: Download ONNX Runtime
+      - name: Download and install TFLite library and headers
+        run: |
+          TFLITE_VERSION="v2.17.1"
+          # Download the prebuilt library
+          wget -q https://github.com/tphakala/tflite_c/releases/download/${TFLITE_VERSION}/tflite_c_${TFLITE_VERSION}_linux_amd64.tar.gz
+          tar -xzf tflite_c_${TFLITE_VERSION}_linux_amd64.tar.gz
+          sudo cp libtensorflowlite_c.so.2.17.1 /usr/lib/
+          sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2.17.1 /usr/lib/libtensorflowlite_c.so.2
+          sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2 /usr/lib/libtensorflowlite_c.so
+          sudo ldconfig
+          # Get TFLite headers from tensorflow source
+          git clone --depth=1 --branch v2.17.0 \
+            --filter=blob:none --no-checkout \
+            https://github.com/tensorflow/tensorflow.git /tmp/tensorflow
+          cd /tmp/tensorflow
+          git sparse-checkout set tensorflow/lite/c tensorflow/lite/core/c tensorflow/lite/kernels/internal
+          git checkout
+          sudo mkdir -p /usr/include
+          sudo cp -r /tmp/tensorflow /usr/local/include/tensorflow
+          echo "TFLite headers installed"
+
+      - name: Download and install ONNX Runtime
         run: |
           ORT_VERSION="1.24.4"
           wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
@@ -42,24 +63,15 @@ jobs:
           sudo cp onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION} /usr/lib/
           sudo ln -sfn /usr/lib/libonnxruntime.so.${ORT_VERSION} /usr/lib/libonnxruntime.so.1
           sudo ln -sfn /usr/lib/libonnxruntime.so.1 /usr/lib/libonnxruntime.so
-          sudo ldconfig
-          echo "ORT_INCLUDE_PATH=$(pwd)/onnxruntime-linux-x64-${ORT_VERSION}/include" >> $GITHUB_ENV
-
-      - name: Download TFLite library
-        run: |
-          wget -q https://github.com/tphakala/tflite_c/releases/download/v2.17.1/tflite_c_v2.17.1_linux_amd64.tar.gz
-          tar -xzf tflite_c_v2.17.1_linux_amd64.tar.gz
-          sudo cp libtensorflowlite_c.so.2.17.1 /usr/lib/
-          sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2.17.1 /usr/lib/libtensorflowlite_c.so.2
-          sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2 /usr/lib/libtensorflowlite_c.so
+          sudo cp -r onnxruntime-linux-x64-${ORT_VERSION}/include/* /usr/local/include/
           sudo ldconfig
 
       - name: Build BirdNET-Go with ONNX backend
         run: |
           cd birdnet-go
           CGO_ENABLED=1 \
-          CGO_CFLAGS="-I${ORT_INCLUDE_PATH}" \
-          CGO_LDFLAGS="-L/usr/lib -lonnxruntime" \
+          CGO_CFLAGS="-I/usr/local/include" \
+          CGO_LDFLAGS="-L/usr/lib -lonnxruntime -ltensorflowlite_c" \
           go build -tags onnx \
             -ldflags="-s -w" \
             -o birdnet-go-onnx \
