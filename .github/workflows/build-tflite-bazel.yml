@@ -23,19 +23,16 @@ jobs:
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
 
-      - name: Pre-fetch XNNPACK so we can patch it
+      - name: Patch TFLite to disable XNNPACK before fetch
         run: |
           cd tensorflow
-          # Run a dummy fetch to download external deps including XNNPACK
-          bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so 2>/dev/null || true
-          # Find XNNPACK location
-          XNNPACK_DIR=$(find ~/.cache/bazel -name "BUILD.bazel" -path "*/XNNPACK/*" 2>/dev/null | head -1 | xargs dirname)
-          echo "XNNPACK dir: $XNNPACK_DIR"
-          if [ -n "$XNNPACK_DIR" ]; then
-            # Remove all AVX512 targets from XNNPACK BUILD file
-            sed -i '/avx512/d' "$XNNPACK_DIR/BUILD.bazel"
-            echo "Patched XNNPACK BUILD.bazel"
-          fi
+          # Patch the TFLite C API build file to not depend on XNNPACK
+          # Find the tflite C library build target and remove xnnpack dependency
+          sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
+            tensorflow/lite/BUILD 2>/dev/null || true
+          # Also patch the delegates BUILD  
+          grep -r "tflite_with_xnnpack" tensorflow/lite/ --include="*.bzl" -l | head -5
+          grep -r "xnnpack_default" tensorflow/lite/ --include="*.bzl" -l | head -5
 
       - name: Build TFLite C library without XNNPACK
         run: |
@@ -49,6 +46,7 @@ jobs:
             --copt=-mno-sse4.1 \
             --copt=-mno-sse4.2 \
             --define=tflite_enable_xnnpack=false \
+            --define=tflite_with_xnnpack=false \
             --define=no_tensorflow_py_deps=true \
             --strip=always \
             //tensorflow/lite/c:libtensorflowlite_c.so
