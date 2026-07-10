@@ -1,0 +1,33 @@
+name: Build TFLite no-AVX2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential git
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth=1 --branch v2.17.0 https://github.com/tensorflow/tensorflow.git
+
+      - name: Build TFLite C library
+        run: |
+          cd tensorflow
+          mkdir tflite_build && cd tflite_build
+          cmake ../tensorflow/lite/c \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-mno-avx2 -mno-avx" \
+            -DCMAKE_CXX_FLAGS="-mno-avx2 -mno-avx"
+          cmake --build . -j$(nproc)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_c
+          path: tensorflow/tflite_build/libtensorflowlite_c.so
