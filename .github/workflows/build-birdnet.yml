@@ -12,18 +12,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git wget curl
 
-      - name: Install Go 1.25
-        run: |
-          wget -q https://go.dev/dl/go1.25.0.linux-amd64.tar.gz || \
-          wget -q https://go.dev/dl/go1.24.4.linux-amd64.tar.gz -O go1.25.0.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Clone BirdNET-Go
         run: |
           git clone --depth=1 https://github.com/tphakala/birdnet-go.git
           cd birdnet-go
           echo "BirdNET-Go version: $(git rev-parse --short HEAD)"
+
+      - name: Build frontend
+        run: |
+          cd birdnet-go/frontend
+          npm install
+          npm run build
 
       - name: Download ONNX Runtime
         run: |
@@ -34,10 +43,9 @@ jobs:
           sudo ln -sfn /usr/lib/libonnxruntime.so.${ORT_VERSION} /usr/lib/libonnxruntime.so.1
           sudo ln -sfn /usr/lib/libonnxruntime.so.1 /usr/lib/libonnxruntime.so
           sudo ldconfig
-          echo "ORT_LIB_PATH=/usr/lib" >> $GITHUB_ENV
           echo "ORT_INCLUDE_PATH=$(pwd)/onnxruntime-linux-x64-${ORT_VERSION}/include" >> $GITHUB_ENV
 
-      - name: Download TFLite library (still needed for linking)
+      - name: Download TFLite library
         run: |
           wget -q https://github.com/tphakala/tflite_c/releases/download/v2.17.1/tflite_c_v2.17.1_linux_amd64.tar.gz
           tar -xzf tflite_c_v2.17.1_linux_amd64.tar.gz
@@ -51,7 +59,7 @@ jobs:
           cd birdnet-go
           CGO_ENABLED=1 \
           CGO_CFLAGS="-I${ORT_INCLUDE_PATH}" \
-          CGO_LDFLAGS="-L${ORT_LIB_PATH} -lonnxruntime" \
+          CGO_LDFLAGS="-L/usr/lib -lonnxruntime" \
           go build -tags onnx \
             -ldflags="-s -w" \
             -o birdnet-go-onnx \
