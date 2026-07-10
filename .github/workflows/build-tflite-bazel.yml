@@ -22,12 +22,18 @@ jobs:
       - name: Clone TensorFlow v2.17.1
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
+
+      - name: Configure TensorFlow
+        run: |
           cd tensorflow
-          echo "TensorFlow version: $(git describe --tags)"
+          # Set minimal config to avoid interactive prompts
+          echo "" | python3 configure.py || true
 
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
+          # Use --per_file_copt to override flags only for XNNPACK files
+          # and completely exclude AVX512 variants
           bazelisk build \
             -c opt \
             --copt=-O2 \
@@ -39,9 +45,7 @@ jobs:
             --define=tflite_enable_xnnpack=false \
             --define=no_tensorflow_py_deps=true \
             --strip=always \
-            --@xnnpack//:xnnpack_enable_avx512fp16=false \
-            --@xnnpack//:xnnpack_enable_avx512vbmi=false \
-            --@xnnpack//:xnnpack_enable_avx512vnni=false \
+            --per_file_copt=external/XNNPACK/.*@-mno-avx512f,-mno-avx512fp16,-mno-avx512vbmi,-mno-avx512vnni,-mno-avx512bf16 \
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
