@@ -34,7 +34,21 @@ jobs:
           npm install
           npm run build
 
-      - name: Download TFLite library and headers
+      - name: Download TFLite headers (sparse checkout of headers only)
+        run: |
+          git clone --depth=1 --branch v2.17.0 \
+            --filter=blob:none \
+            https://github.com/tensorflow/tensorflow.git /tmp/tensorflow
+          cd /tmp/tensorflow
+          git sparse-checkout init --cone
+          git sparse-checkout set tensorflow/lite
+          git checkout
+          sudo mkdir -p /usr/local/include
+          sudo cp -r /tmp/tensorflow/tensorflow /usr/local/include/
+          echo "Headers installed:"
+          find /usr/local/include/tensorflow/lite -name "*.h" | head -20
+
+      - name: Download TFLite library
         run: |
           TFLITE_VERSION="v2.17.1"
           wget -q https://github.com/tphakala/tflite_c/releases/download/${TFLITE_VERSION}/tflite_c_${TFLITE_VERSION}_linux_amd64.tar.gz
@@ -43,19 +57,6 @@ jobs:
           sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2.17.1 /usr/lib/libtensorflowlite_c.so.2
           sudo ln -sfn /usr/lib/libtensorflowlite_c.so.2 /usr/lib/libtensorflowlite_c.so
           sudo ldconfig
-          # Download TFLite headers directly from the tphakala/tflite_c release
-          wget -q https://github.com/tphakala/tflite_c/releases/download/${TFLITE_VERSION}/tflite_c_${TFLITE_VERSION}_linux_amd64.tar.gz -O tflite_headers.tar.gz || true
-          # Get headers from tensorflow directly via a minimal download
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/c/c_api.h" -P /tmp/tflite_headers/tensorflow/lite/c/
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/c/c_api_types.h" -P /tmp/tflite_headers/tensorflow/lite/c/
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/c/c_api_experimental.h" -P /tmp/tflite_headers/tensorflow/lite/c/
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/c/common.h" -P /tmp/tflite_headers/tensorflow/lite/c/
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/core/c/c_api.h" -P /tmp/tflite_headers/tensorflow/lite/core/c/ || true
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/core/c/c_api_types.h" -P /tmp/tflite_headers/tensorflow/lite/core/c/ || true
-          wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/v2.17.0/tensorflow/lite/core/c/common.h" -P /tmp/tflite_headers/tensorflow/lite/core/c/ || true
-          sudo cp -r /tmp/tflite_headers/* /usr/local/include/
-          echo "TFLite headers:"
-          find /usr/local/include/tensorflow -name "*.h" 2>/dev/null
 
       - name: Download and install ONNX Runtime
         run: |
@@ -67,14 +68,6 @@ jobs:
           sudo ln -sfn /usr/lib/libonnxruntime.so.1 /usr/lib/libonnxruntime.so
           sudo cp -r onnxruntime-linux-x64-${ORT_VERSION}/include/* /usr/local/include/
           sudo ldconfig
-
-      - name: Download go module cache to find tflite header path
-        run: |
-          cd birdnet-go
-          go mod download github.com/tphakala/go-tflite
-          TFLITE_GO_PATH=$(go env GOPATH)/pkg/mod/github.com/tphakala/go-tflite@v0.2.2-0.20260514101223-29408e53fff7
-          echo "go-tflite path: $TFLITE_GO_PATH"
-          ls $TFLITE_GO_PATH/
 
       - name: Build BirdNET-Go with ONNX backend
         run: |
