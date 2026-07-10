@@ -23,17 +23,23 @@ jobs:
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
 
-      - name: Configure TensorFlow
+      - name: Pre-fetch XNNPACK so we can patch it
         run: |
           cd tensorflow
-          # Set minimal config to avoid interactive prompts
-          echo "" | python3 configure.py || true
+          # Run a dummy fetch to download external deps including XNNPACK
+          bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so 2>/dev/null || true
+          # Find XNNPACK location
+          XNNPACK_DIR=$(find ~/.cache/bazel -name "BUILD.bazel" -path "*/XNNPACK/*" 2>/dev/null | head -1 | xargs dirname)
+          echo "XNNPACK dir: $XNNPACK_DIR"
+          if [ -n "$XNNPACK_DIR" ]; then
+            # Remove all AVX512 targets from XNNPACK BUILD file
+            sed -i '/avx512/d' "$XNNPACK_DIR/BUILD.bazel"
+            echo "Patched XNNPACK BUILD.bazel"
+          fi
 
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
-          # Use --per_file_copt to override flags only for XNNPACK files
-          # and completely exclude AVX512 variants
           bazelisk build \
             -c opt \
             --copt=-O2 \
@@ -45,7 +51,6 @@ jobs:
             --define=tflite_enable_xnnpack=false \
             --define=no_tensorflow_py_deps=true \
             --strip=always \
-            --per_file_copt=external/XNNPACK/.*@-mno-avx512f,-mno-avx512fp16,-mno-avx512vbmi,-mno-avx512vnni,-mno-avx512bf16 \
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
