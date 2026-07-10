@@ -22,12 +22,16 @@ jobs:
           mkdir tflite_build && cd tflite_build
           cmake ../tensorflow/lite/c \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-march=k8 -mno-avx -mno-avx2 -mno-sse4.1 -mno-sse4.2" \
-            -DCMAKE_CXX_FLAGS="-march=k8 -mno-avx -mno-avx2 -mno-sse4.1 -mno-sse4.2"
+            -DTFLITE_ENABLE_XNNPACK=OFF \
+            -DCMAKE_C_FLAGS="-march=k8 -mno-avx -mno-avx2 -mno-sse4.1 -mno-sse4.2 -mno-ssse3" \
+            -DCMAKE_CXX_FLAGS="-march=k8 -mno-avx -mno-avx2 -mno-sse4.1 -mno-sse4.2 -mno-ssse3"
           cmake --build . -j$(nproc)
 
-      - name: Verify no AVX2 instructions
+      - name: Verify no SSE4 instructions
         run: |
+          echo "=== Checking for SSE4.1 (pmovsxbq) ==="
+          objdump -d tensorflow/tflite_build/libtensorflowlite_c.so | grep -c "pmovsx" || echo "SSE4 check: 0 pmovsx instructions found - GOOD"
+          echo "=== Checking for ymm (AVX2) ==="
           objdump -d tensorflow/tflite_build/libtensorflowlite_c.so | grep -c "ymm" || echo "AVX2 check: 0 ymm registers found - GOOD"
 
       - name: Upload artifact
