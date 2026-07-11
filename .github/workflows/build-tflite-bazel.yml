@@ -1,8 +1,6 @@
 name: Build TFLite no-XNNPACK (Bazel)
-
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -11,29 +9,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git wget curl python3 python3-pip
-
       - name: Install Bazelisk
         run: |
           wget -q https://github.com/bazelbuild/bazelisk/releases/download/v1.20.0/bazelisk-linux-amd64
           chmod +x bazelisk-linux-amd64
           sudo mv bazelisk-linux-amd64 /usr/local/bin/bazelisk
           sudo ln -sfn /usr/local/bin/bazelisk /usr/local/bin/bazel
-
       - name: Clone TensorFlow v2.17.1
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
-
       - name: Patch TFLite to disable XNNPACK before fetch
         run: |
           cd tensorflow
-          # Patch the TFLite C API build file to not depend on XNNPACK
-          # Find the tflite C library build target and remove xnnpack dependency
           sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
             tensorflow/lite/BUILD 2>/dev/null || true
-          # Also patch the delegates BUILD  
           grep -r "tflite_with_xnnpack" tensorflow/lite/ --include="*.bzl" -l | head -5
           grep -r "xnnpack_default" tensorflow/lite/ --include="*.bzl" -l | head -5
-
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
@@ -45,6 +36,16 @@ jobs:
             --copt=-mno-avx2 \
             --copt=-mno-sse4.1 \
             --copt=-mno-sse4.2 \
+            --host_copt=-O2 \
+            --host_copt=-march=k8 \
+            --host_copt=-mno-avx \
+            --host_copt=-mno-avx2 \
+            --host_copt=-mno-sse4.1 \
+            --host_copt=-mno-sse4.2 \
+            --conlyopt=-mno-sse4.1 \
+            --conlyopt=-mno-sse4.2 \
+            --cxxopt=-mno-sse4.1 \
+            --cxxopt=-mno-sse4.2 \
             --define=tflite_enable_xnnpack=false \
             --define=tflite_with_xnnpack=false \
             --define=no_tensorflow_py_deps=true \
@@ -52,7 +53,6 @@ jobs:
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
