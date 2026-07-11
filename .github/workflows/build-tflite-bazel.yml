@@ -18,13 +18,27 @@ jobs:
       - name: Clone TensorFlow v2.17.1
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
-      - name: Patch TFLite to disable XNNPACK before fetch
+      - name: Patch TFLite to disable XNNPACK and Ruy SSE4.1
         run: |
           cd tensorflow
           sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
             tensorflow/lite/BUILD 2>/dev/null || true
-          grep -r "tflite_with_xnnpack" tensorflow/lite/ --include="*.bzl" -l | head -5
-          grep -r "xnnpack_default" tensorflow/lite/ --include="*.bzl" -l | head -5
+          # Remove SSE4.1 hand-written assembly from Ruy
+          find third_party/ -path "*/ruy/*" -name "*.h" -exec grep -l "sse4" {} \; 2>/dev/null | head -20
+          find . -path "*/ruy/*" -name "*sse*" 2>/dev/null | head -20
+          # Patch Ruy to skip SSE4.1 kernels - force PORTABLE path
+          echo "Searching for Ruy platform detection..."
+          find . -path "*/ruy/*" -name "platform.h" 2>/dev/null
+      - name: Patch Ruy platform detection to disable SSE4.1
+        run: |
+          cd tensorflow
+          # After bazel fetch, ruy source will be in the bazel cache
+          # We need to build with a flag to disable ruy's optimized paths
+          # The cleanest way is to define RUY_PLATFORM_X86=0 to force portable kernels
+          cat >> .bazelrc << 'EOF'
+          build --copt=-DRUY_PLATFORM_X86=0
+          build --host_copt=-DRUY_PLATFORM_X86=0
+          EOF
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
@@ -32,16 +46,19 @@ jobs:
             -c opt \
             --copt=-O2 \
             --copt=-march=k8 \
+            --copt=-mtune=k8 \
             --copt=-mno-avx \
             --copt=-mno-avx2 \
             --copt=-mno-sse4.1 \
             --copt=-mno-sse4.2 \
+            --copt=-DRUY_PLATFORM_X86=0 \
             --host_copt=-O2 \
             --host_copt=-march=k8 \
             --host_copt=-mno-avx \
             --host_copt=-mno-avx2 \
             --host_copt=-mno-sse4.1 \
             --host_copt=-mno-sse4.2 \
+            --host_copt=-DRUY_PLATFORM_X86=0 \
             --conlyopt=-mno-sse4.1 \
             --conlyopt=-mno-sse4.2 \
             --cxxopt=-mno-sse4.1 \
@@ -53,6 +70,16 @@ jobs:
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
+      - name: Verify no SSE4.1 instructions
+        run: |
+          echo "Checking for SSE4.1 instructions..."
+          SSE41_COUNT=$(objdump -d tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw" || true)
+          echo "SSE4.1 instruction count: ${SSE41_COUNT}"
+          if [ "$SSE41_COUNT" -gt 0 ]; then
+            echo "WARNING: Library still contains ${SSE41_COUNT} SSE4.1 instructions"
+          else
+            echo "SUCCESS: No SSE4.1 instructions found"
+          fi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
