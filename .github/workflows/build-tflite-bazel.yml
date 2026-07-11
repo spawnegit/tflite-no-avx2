@@ -23,34 +23,38 @@ jobs:
           cd tensorflow
           sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
             tensorflow/lite/BUILD 2>/dev/null || true
-      - name: Fetch dependencies then patch Ruy
+      - name: Prepare local Ruy with no AVX kernels
         run: |
           cd tensorflow
-          bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so
-          echo "Finding Ruy BUILD file..."
-          RUY_BUILD=$(find ~/.cache/bazel/ -path "*/external/ruy/ruy/BUILD" 2>/dev/null | head -1)
-          echo "Found: $RUY_BUILD"
-          if [ -n "$RUY_BUILD" ]; then
-            echo "Patching Ruy BUILD to remove AVX/SSE4 copts..."
-            sed -i 's/"-mavx512f"/"-mno-avx512f"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx512bw"/"-mno-avx512bw"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx512dq"/"-mno-avx512dq"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx512cd"/"-mno-avx512cd"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx512vl"/"-mno-avx512vl"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx2"/"-mno-avx2"/g' "$RUY_BUILD"
-            sed -i 's/"-mfma"/"-mno-fma"/g' "$RUY_BUILD"
-            sed -i 's/"-mavx"/"-mno-avx"/g' "$RUY_BUILD"
-            echo "Patch complete. Checking result..."
-            grep -n "mavx\|mfma\|msse" "$RUY_BUILD" | head -30
-          else
-            echo "ERROR: Could not find Ruy BUILD file"
-            exit 1
-          fi
+          # First fetch to get Ruy source
+          bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so || true
+          # Find and copy Ruy to a local directory we control
+          RUY_SRC=$(find ~/.cache/bazel/ -path "*/external/ruy" -type d | head -1)
+          echo "Found Ruy at: $RUY_SRC"
+          cp -r "$RUY_SRC" /tmp/ruy_local
+          # Gut the AVX/AVX2/AVX512 kernel and pack source files
+          # Replace them with empty stubs that compile but contain no SIMD
+          for f in kernel_avx.cc kernel_avx2_fma.cc kernel_avx512.cc pack_avx.cc pack_avx2_fma.cc pack_avx512.cc; do
+            FILEPATH="/tmp/ruy_local/ruy/$f"
+            if [ -f "$FILEPATH" ]; then
+              echo "Stubbing $f"
+              # Keep includes and namespace, remove all function bodies
+              echo '// Stubbed out - no AVX/SSE4.1 support' > "$FILEPATH"
+              echo '#include "ruy/kernel_common.h"' >> "$FILEPATH"
+              echo '#include "ruy/pack_common.h"' >> "$FILEPATH"
+            fi
+          done
+          # Also strip AVX copts from the BUILD file to prevent compile errors
+          sed -i '/-mavx/d' /tmp/ruy_local/ruy/BUILD
+          sed -i '/-mfma/d' /tmp/ruy_local/ruy/BUILD
+          echo "Local Ruy prepared at /tmp/ruy_local"
+          ls -la /tmp/ruy_local/ruy/kernel_avx*.cc /tmp/ruy_local/ruy/pack_avx*.cc
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
           bazelisk build \
             -c opt \
+            --override_repository=ruy=/tmp/ruy_local \
             --copt=-O2 \
             --copt=-march=k8 \
             --copt=-mtune=k8 \
@@ -83,7 +87,6 @@ jobs:
           echo "SSE4.1 instruction count: ${SSE41_COUNT}"
           if [ "$SSE41_COUNT" -gt 0 ]; then
             echo "WARNING: Library still contains ${SSE41_COUNT} SSE4.1 instructions"
-            echo "Finding which object files contain SSE4.1..."
             for obj in $(find tensorflow/bazel-out/ -name "*.o" 2>/dev/null | head -500); do
               count=$(objdump -d "$obj" 2>/dev/null | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw" || true)
               if [ "$count" -gt 0 ]; then
