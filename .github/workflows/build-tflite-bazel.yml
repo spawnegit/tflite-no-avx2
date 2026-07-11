@@ -30,12 +30,9 @@ jobs:
           RUY_SRC=$(find ~/.cache/bazel/ -path "*/external/ruy" -type d | head -1)
           echo "Found Ruy at: $RUY_SRC"
           cp -r "$RUY_SRC" /tmp/ruy_local
-          # Remove all SIMD-enabling copts from Ruy BUILD so kernels compile
-          # with our global -march=k8 -mno-sse4.1 flags instead
           RUY_BUILD="/tmp/ruy_local/ruy/BUILD"
-          echo "Before patch - AVX/SSE lines in BUILD:"
-          grep -n "mavx\|mfma\|msse\|mavx512" "$RUY_BUILD" | head -20
-          # Replace SIMD copts with empty strings
+          echo "Before patch:"
+          grep -n "mavx\|mfma" "$RUY_BUILD" | head -20
           sed -i 's/"-mavx512f"/""/g' "$RUY_BUILD"
           sed -i 's/"-mavx512bw"/""/g' "$RUY_BUILD"
           sed -i 's/"-mavx512dq"/""/g' "$RUY_BUILD"
@@ -44,8 +41,8 @@ jobs:
           sed -i 's/"-mavx2"/""/g' "$RUY_BUILD"
           sed -i 's/"-mfma"/""/g' "$RUY_BUILD"
           sed -i 's/"-mavx"/""/g' "$RUY_BUILD"
-          echo "After patch - AVX/SSE lines in BUILD:"
-          grep -n "mavx\|mfma\|msse\|mavx512" "$RUY_BUILD" | head -20 || echo "None found - good"
+          echo "After patch:"
+          grep -n "mavx\|mfma" "$RUY_BUILD" | head -20 || echo "None found - good"
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
@@ -78,6 +75,22 @@ jobs:
           ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
       - name: Verify no SSE4.1 instructions
         run: |
-          echo "Checking for SSE4.1 instructions..."
           SO_FILE="tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so"
-          SSE41_COUNT=$(objdump -d "$SO_FILE" | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxu
+          SSE41_COUNT=$(objdump -d "$SO_FILE" | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
+          echo "SSE4.1 instruction count: ${SSE41_COUNT}"
+          if [ "$SSE41_COUNT" -gt 0 ]; then
+            echo "WARNING: still ${SSE41_COUNT} SSE4.1 instructions"
+            for obj in $(find tensorflow/bazel-out/ -name '*.o' 2>/dev/null | head -500); do
+              count=$(objdump -d "$obj" 2>/dev/null | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
+              if [ "$count" -gt 0 ]; then
+                echo "  ${count} in: $obj"
+              fi
+            done
+          else
+            echo "SUCCESS: No SSE4.1 instructions found"
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_c-no-xnnpack
+          path: tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
