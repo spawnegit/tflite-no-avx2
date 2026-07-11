@@ -18,11 +18,34 @@ jobs:
       - name: Clone TensorFlow v2.17.1
         run: |
           git clone --depth=1 --branch v2.17.1 https://github.com/tensorflow/tensorflow.git
-      - name: Patch TFLite to disable XNNPACK and Ruy SSE4.1
+      - name: Patch TFLite to disable XNNPACK
         run: |
           cd tensorflow
           sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
             tensorflow/lite/BUILD 2>/dev/null || true
+      - name: Fetch dependencies then patch Ruy
+        run: |
+          cd tensorflow
+          bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so
+          echo "Finding Ruy BUILD file..."
+          RUY_BUILD=$(find ~/.cache/bazel/ -path "*/external/ruy/ruy/BUILD" 2>/dev/null | head -1)
+          echo "Found: $RUY_BUILD"
+          if [ -n "$RUY_BUILD" ]; then
+            echo "Patching Ruy BUILD to remove AVX/SSE4 copts..."
+            sed -i 's/"-mavx512f"/"-mno-avx512f"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx512bw"/"-mno-avx512bw"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx512dq"/"-mno-avx512dq"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx512cd"/"-mno-avx512cd"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx512vl"/"-mno-avx512vl"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx2"/"-mno-avx2"/g' "$RUY_BUILD"
+            sed -i 's/"-mfma"/"-mno-fma"/g' "$RUY_BUILD"
+            sed -i 's/"-mavx"/"-mno-avx"/g' "$RUY_BUILD"
+            echo "Patch complete. Checking result..."
+            grep -n "mavx\|mfma\|msse" "$RUY_BUILD" | head -30
+          else
+            echo "ERROR: Could not find Ruy BUILD file"
+            exit 1
+          fi
       - name: Build TFLite C library without XNNPACK
         run: |
           cd tensorflow
@@ -35,14 +58,12 @@ jobs:
             --copt=-mno-avx2 \
             --copt=-mno-sse4.1 \
             --copt=-mno-sse4.2 \
-            --copt=-DRUY_PLATFORM_X86=0 \
             --host_copt=-O2 \
             --host_copt=-march=k8 \
             --host_copt=-mno-avx \
             --host_copt=-mno-avx2 \
             --host_copt=-mno-sse4.1 \
             --host_copt=-mno-sse4.2 \
-            --host_copt=-DRUY_PLATFORM_X86=0 \
             --conlyopt=-mno-sse4.1 \
             --conlyopt=-mno-sse4.2 \
             --cxxopt=-mno-sse4.1 \
@@ -60,13 +81,18 @@ jobs:
           SO_FILE="tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so"
           SSE41_COUNT=$(objdump -d "$SO_FILE" | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw" || true)
           echo "SSE4.1 instruction count: ${SSE41_COUNT}"
-          echo "Finding which object files contain SSE4.1..."
-          for obj in $(find tensorflow/bazel-out/ -name "*.o" 2>/dev/null | head -500); do
-            count=$(objdump -d "$obj" 2>/dev/null | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw" || true)
-            if [ "$count" -gt 0 ]; then
-              echo "  ${count} SSE4.1 insns in: $obj"
-            fi
-          done
+          if [ "$SSE41_COUNT" -gt 0 ]; then
+            echo "WARNING: Library still contains ${SSE41_COUNT} SSE4.1 instructions"
+            echo "Finding which object files contain SSE4.1..."
+            for obj in $(find tensorflow/bazel-out/ -name "*.o" 2>/dev/null | head -500); do
+              count=$(objdump -d "$obj" 2>/dev/null | grep -c -E "ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw" || true)
+              if [ "$count" -gt 0 ]; then
+                echo "  ${count} SSE4.1 insns in: $obj"
+              fi
+            done
+          else
+            echo "SUCCESS: No SSE4.1 instructions found"
+          fi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
