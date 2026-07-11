@@ -72,20 +72,16 @@ jobs:
             --strip=always \
             //tensorflow/lite/c:libtensorflowlite_c.so
           echo "Build complete"
-          ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
+          find bazel-bin/ -name 'libtensorflowlite_c.so' -ls
+          mkdir -p /tmp/output
+          find bazel-bin/ -name 'libtensorflowlite_c.so' -exec cp {} /tmp/output/ \;
       - name: Verify no SSE4.1 instructions
         run: |
-          SO_FILE="tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so"
+          SO_FILE="/tmp/output/libtensorflowlite_c.so"
           SSE41_COUNT=$(objdump -d "$SO_FILE" | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
           echo "SSE4.1 instruction count: ${SSE41_COUNT}"
           if [ "$SSE41_COUNT" -gt 0 ]; then
             echo "WARNING: still ${SSE41_COUNT} SSE4.1 instructions"
-            for obj in $(find tensorflow/bazel-out/ -name '*.o' 2>/dev/null | head -500); do
-              count=$(objdump -d "$obj" 2>/dev/null | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
-              if [ "$count" -gt 0 ]; then
-                echo "  ${count} in: $obj"
-              fi
-            done
           else
             echo "SUCCESS: No SSE4.1 instructions found"
           fi
@@ -93,4 +89,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: libtensorflowlite_c-no-xnnpack
-          path: tensorflow/bazel-bin/tensorflow/lite/c/l
+          path: /tmp/output/libtensorflowlite_c.so
