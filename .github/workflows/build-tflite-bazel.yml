@@ -23,74 +23,24 @@ jobs:
           cd tensorflow
           sed -i 's/tflite_with_xnnpack_default_enabled = True/tflite_with_xnnpack_default_enabled = False/' \
             tensorflow/lite/BUILD 2>/dev/null || true
-      - name: Prepare patched Ruy
+      - name: Find where AVX flags live in Ruy
         run: |
           cd tensorflow
           bazelisk fetch //tensorflow/lite/c:libtensorflowlite_c.so || true
           RUY_SRC=$(find ~/.cache/bazel/ -path "*/external/ruy" -type d | head -1)
-          echo "Found Ruy at: $RUY_SRC"
-          cp -r "$RUY_SRC" /tmp/ruy_local
-          RUY_BUILD="/tmp/ruy_local/ruy/BUILD"
-          echo "Before patch:"
-          grep -n "mavx\|mfma" "$RUY_BUILD" | head -20
-          sed -i 's/"-mavx512f"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx512bw"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx512dq"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx512cd"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx512vl"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx2"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mfma"/""/g' "$RUY_BUILD"
-          sed -i 's/"-mavx"/""/g' "$RUY_BUILD"
-          echo "After patch:"
-          grep -n "mavx\|mfma" "$RUY_BUILD" | head -20 || echo "None found - good"
-      - name: Build TFLite C library without XNNPACK
-        run: |
-          cd tensorflow
-          bazelisk build \
-            -c opt \
-            --override_repository=ruy=/tmp/ruy_local \
-            --copt=-O2 \
-            --copt=-march=k8 \
-            --copt=-mtune=k8 \
-            --copt=-mno-avx \
-            --copt=-mno-avx2 \
-            --copt=-mno-sse4.1 \
-            --copt=-mno-sse4.2 \
-            --host_copt=-O2 \
-            --host_copt=-march=k8 \
-            --host_copt=-mno-avx \
-            --host_copt=-mno-avx2 \
-            --host_copt=-mno-sse4.1 \
-            --host_copt=-mno-sse4.2 \
-            --conlyopt=-mno-sse4.1 \
-            --conlyopt=-mno-sse4.2 \
-            --cxxopt=-mno-sse4.1 \
-            --cxxopt=-mno-sse4.2 \
-            --define=tflite_enable_xnnpack=false \
-            --define=tflite_with_xnnpack=false \
-            --define=no_tensorflow_py_deps=true \
-            --strip=always \
-            //tensorflow/lite/c:libtensorflowlite_c.so
-          echo "Build complete"
-          ls -lh bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
-      - name: Verify no SSE4.1 instructions
-        run: |
-          SO_FILE="tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so"
-          SSE41_COUNT=$(objdump -d "$SO_FILE" | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
-          echo "SSE4.1 instruction count: ${SSE41_COUNT}"
-          if [ "$SSE41_COUNT" -gt 0 ]; then
-            echo "WARNING: still ${SSE41_COUNT} SSE4.1 instructions"
-            for obj in $(find tensorflow/bazel-out/ -name '*.o' 2>/dev/null | head -500); do
-              count=$(objdump -d "$obj" 2>/dev/null | grep -cE 'ptest|pblendvb|pmovsx|roundss|roundsd|blendvps|insertps|pminuw|pmaxuw|pminud|pmaxud|pmulld|phminposuw' || true)
-              if [ "$count" -gt 0 ]; then
-                echo "  ${count} in: $obj"
-              fi
-            done
-          else
-            echo "SUCCESS: No SSE4.1 instructions found"
-          fi
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: libtensorflowlite_c-no-xnnpack
-          path: tensorflow/bazel-bin/tensorflow/lite/c/libtensorflowlite_c.so
+          echo "=== Ruy directory structure ==="
+          find "$RUY_SRC/ruy" -maxdepth 1 -name '*.bzl' -o -name 'BUILD' -o -name '*.bazel' | sort
+          echo ""
+          echo "=== Searching all Ruy files for mavx ==="
+          grep -rn "mavx\|avx\|mfma\|sse4" "$RUY_SRC/ruy/" --include='*.bzl' --include='BUILD' --include='*.bazel' | head -40
+          echo ""
+          echo "=== Content of kernel_avx target in BUILD ==="
+          sed -n '/kernel_avx/,/^)/p' "$RUY_SRC/ruy/BUILD" | head -30
+          echo ""
+          echo "=== Searching for copts in BUILD ==="
+          grep -n "copts" "$RUY_SRC/ruy/BUILD" | head -20
+          echo ""
+          echo "=== Any .bzl files with copts ==="
+          grep -rn "copts\|mavx\|mfma" "$RUY_SRC/ruy/" --include='*.bzl' | head -20
+      - name: Upload placeholder
+        run: echo "Diagnostic run only"
